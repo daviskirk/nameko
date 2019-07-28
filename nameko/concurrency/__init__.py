@@ -18,89 +18,52 @@ YES:
 >>> from nameko.concurrency import sleep
 
 """
+import importlib
 import os
+import sys
+from types import ModuleType
 
 from nameko import config
 from nameko.constants import CONCURRENCY_BACKEND_CONFIG_KEY, DEFAULT_CONCURRENCY_BACKEND
 
-mode = os.environ.get(
+_mode = os.environ.get(
     CONCURRENCY_BACKEND_CONFIG_KEY,
     config.get(CONCURRENCY_BACKEND_CONFIG_KEY, DEFAULT_CONCURRENCY_BACKEND)
 )
 
-if mode == 'eventlet':
-    from nameko.concurrency.eventlet_backend import (
-        getcurrent,
-        spawn,
-        spawn_n,
-        spawn_after,
-        sleep,
-        Event,
-        Pool,
-        Queue,
-        monkey_patch,
-        Semaphore,
-        Timeout,
-        resize_queue,
-        wait,
-        get_waiter_count,
-        listen,
-        setup_backdoor,
-        get_wsgi_server,
-        process_wsgi_request,
-        HttpOnlyProtocol,
-    )
-
-elif mode == 'gevent':
-    # Differences to eventlet:
-    # Link executes AFTER parent thread has returned (in eventlet it executes
-    # in the same context)
-    from nameko.concurrency.gevent_backend import (
-        getcurrent,
-        spawn,
-        spawn_n,
-        spawn_after,
-        sleep,
-        Event,
-        Pool,
-        Queue,
-        monkey_patch,
-        Semaphore,
-        Timeout,
-        resize_queue,
-        wait,
-        get_waiter_count,
-        listen,
-        setup_backdoor,
-        get_wsgi_server,
-        process_wsgi_request,
-        HttpOnlyProtocol,
-    )
-else:
+if _mode not in ('eventlet', 'gevent'):
     raise NotImplementedError(
         "Concurrency backend '{}' is not available. Choose 'eventlet' or 'gevent'."
-        .format(mode)
+        .format(_mode)
     )
 
+_backend_module = 'nameko.concurrency.{}_backend'.format(_mode)
 
-__all__ = [
-    'getcurrent',
-    'spawn',
-    'spawn_n',
-    'spawn_after',
-    'sleep',
-    'Event',
-    'Pool',
-    'Queue',
-    'monkey_patch',
-    'Semaphore',
-    'Timeout',
-    'resize_queue',
-    'wait',
-    'get_waiter_count',
-    'listen',
-    'setup_backdoor',
-    'get_wsgi_server',
-    'process_wsgi_request',
-    'HttpOnlyProtocol',
-]
+
+class module(ModuleType):
+    """Module lookalike to import objects dynamically from submodules.
+
+    See `werkzeug.__init__` for more complex example of this pattern.
+    """
+    mode = _mode
+
+    def __getattr__(self, name):
+        module = importlib.import_module(_backend_module)
+        value = getattr(module, name)
+        setattr(self, name, value)
+        return value
+
+
+# setup the new module and patch it into the dict of loaded modules
+module_name = "nameko.concurrency"
+old_module = sys.modules[module_name]
+new_module = sys.modules[module_name] = module(module_name)
+
+new_module.__dict__.update(
+    {
+        "__file__": __file__,
+        "__package__": module_name,
+        "__doc__": __doc__,
+        '__path__': __path__,  # noqa: F821
+    }
+)
